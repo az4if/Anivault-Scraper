@@ -214,7 +214,15 @@ export async function getMiruroServers(episodeId: string): Promise<MiruroServer[
  * the URL with the stream's own referer and only accept it if the body looks
  * like a real HLS playlist.
  */
-async function isPlayableM3u8(url: string, referer?: string): Promise<boolean> {
+interface ProbeResult {
+  ok: boolean;
+  status?: number;
+  contentType?: string;
+  snippet?: string;
+  error?: string;
+}
+
+async function probeM3u8(url: string, referer?: string): Promise<ProbeResult> {
   try {
     const res = await axios.get(url, {
       timeout: 8000,
@@ -228,11 +236,16 @@ async function isPlayableM3u8(url: string, referer?: string): Promise<boolean> {
       },
     });
 
-    if (res.status < 200 || res.status >= 300) return false;
     const body = typeof res.data === 'string' ? res.data.trim() : '';
-    return body.startsWith('#EXTM3U');
-  } catch {
-    return false;
+    const ok = res.status >= 200 && res.status < 300 && body.startsWith('#EXTM3U');
+    return {
+      ok,
+      status: res.status,
+      contentType: String(res.headers['content-type'] ?? ''),
+      snippet: body.slice(0, 200),
+    };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) };
   }
 }
 
@@ -264,7 +277,8 @@ export async function getMiruroEmbedUrl(sourceId: string): Promise<MiruroEmbedRe
     // instead of a real playlist (this happens for some providers).
     for (const candidate of sorted) {
       const referer = typeof candidate.referer === 'string' && candidate.referer ? candidate.referer : undefined;
-      if (await isPlayableM3u8(candidate.url, referer)) {
+      const probe = await probeM3u8(candidate.url, referer);
+      if (probe.ok) {
         return {
           embedUrl: candidate.url,
           serverName: provider,
@@ -278,4 +292,54 @@ export async function getMiruroEmbedUrl(sourceId: string): Promise<MiruroEmbedRe
   } catch {
     return null;
   }
+}
+
+// ══════════════════════════════════════════════════════════════
+// DEBUG: dump raw pipe responses + probe results for an episode
+// ══════════════════════════════════════════════════════════════
+
+export async function getMiruroDebug(anilistId: number, num: number) {
+  const data = await fetchRawEpisodes(anilistId);
+  const providers = data.providers ?? {};
+  const results: any[] = [];
+
+  for (const [provName, provData] of Object.entries(providers)) {
+    for (const category of ['sub', 'dub', 'raw'] as const) {
+      const eps = episodesFor(provData, category);
+      const ep = eps.find((e) => e.number === num);
+      if (!ep) continue;
+
+      let sources: any = null;
+      let fetchError: string | null = null;
+      try {
+        sources = await fetchSources(ep.id, provName, anilistId, category);
+      } catch (e: any) {
+        fetchError = e?.message || String(e);
+      }
+
+      let streamProbes: any[] = [];
+      if (Array.isArray(sources?.streams)) {
+        streamProbes = await Promise.all(
+          sources.streams.map(async (s: any) => ({
+            url: s?.url,
+            quality: s?.quality,
+            isActive: s?.isActive,
+            referer: s?.referer,
+            probe: typeof s?.url === 'string' && /^https?:\/\//i.test(s.url) ? await probeM3u8(s.url, s?.referer) : { ok: false, error: 'no url' },
+          }))
+        );
+      }
+
+      results.push({
+        provider: provName,
+        category,
+        rawEpisodeId: ep.id,
+        fetchError,
+        rawSources: sources,
+        streamProbes,
+      });
+    }
+  }
+
+  return { anilistId, num, providers: Object.keys(providers), results };
 }
