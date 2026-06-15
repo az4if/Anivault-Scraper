@@ -122,7 +122,7 @@ pre { padding:20px; overflow-x:auto; font-family:var(--mono); font-size:12px; li
 .seg-btn.active { background:var(--surface2); color:var(--text); }
 .seg-btn:hover:not(.active) { color:var(--text); }
 
-.source-grid { display:grid; grid-template-columns:repeat(5,1fr); gap:8px; }
+.source-grid { display:grid; grid-template-columns:repeat(6,1fr); gap:8px; }
 .source-card { border:1px solid var(--border); border-radius:8px; padding:12px; cursor:pointer; transition:all 0.15s; background:var(--bg); text-align:center; }
 .source-card:hover { border-color:var(--muted); }
 .source-card.active { border-color:var(--accent); background:rgba(230,57,70,0.07); }
@@ -265,7 +265,7 @@ pre { padding:20px; overflow-x:auto; font-family:var(--mono); font-size:12px; li
     <p class="hero-desc">A unified REST API to fetch anime stream URLs and embed links across multiple sources, addressed by MAL or AniList ID. Railway-ready, zero config.</p>
     <div class="hero-pills">
       <span class="pill live">Online</span>
-      <span class="pill">5 Sources</span>
+      <span class="pill">6 Sources</span>
       <span class="pill">MAL + AniList IDs</span>
       <span class="pill">Sub · Dub · Raw</span>
       <span class="pill">Server Selection</span>
@@ -331,6 +331,19 @@ pre { padding:20px; overflow-x:auto; font-family:var(--mono); font-size:12px; li
         <div class="sic-row"><span class="sic-row-label">ID format</span><span class="sic-row-val">AniList ID (direct)</span></div>
         <div class="sic-row"><span class="sic-row-label">Servers</span><span class="sic-row-val">kiwi, bonk, bee, bun, twin, ally, moo, cog, pewe, nun, telli, hop</span></div>
         <div class="sic-row"><span class="sic-row-label">Audio</span><span class="sic-row-val">Sub, Dub (per provider)</span></div>
+      </div>
+      <div class="source-info-card">
+        <div class="sic-header">
+          <div class="sic-icon">🔥</div>
+          <div><div class="sic-name">ReAnime</div><div class="sic-url">reanime.to</div></div>
+          <span class="sic-tag works">HLS + Subs</span>
+        </div>
+        <div class="sic-row"><span class="sic-row-label">Key</span><span class="sic-row-val">reanime</span></div>
+        <div class="sic-row"><span class="sic-row-label">ID format</span><span class="sic-row-val">ReAnime slug (e.g. one-piece-xamk74)</span></div>
+        <div class="sic-row"><span class="sic-row-label">Embeds</span><span class="sic-row-val">flixcloud.cc (AES-256-CBC, WASM decrypt)</span></div>
+        <div class="sic-row"><span class="sic-row-label">Audio</span><span class="sic-row-val">Sub, Dub</span></div>
+        <div class="sic-row"><span class="sic-row-label">Extras</span><span class="sic-row-val">Subtitles, thumbnail VTT, intro/outro chapters</span></div>
+        <div class="sic-row"><span class="sic-row-label">Requires</span><span class="sic-row-val">ReAnime Python sidecar (see README)</span></div>
       </div>
     </div>
   </section>
@@ -597,6 +610,17 @@ GET /api/watch?source=<span class="str">dao</span>&malId=<span class="num">21</s
           <div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:6px">Use this when title mapping misses the exact AnimeHeaven show.</div>
         </div>
 
+        <div id="reAnimeSlugWrap" style="margin-bottom:20px;display:none">
+          <label class="field-label">ReAnime Slug</label>
+          <input class="field-input" id="reAnimeSlugInput" placeholder="e.g. one-piece-xamk74 — search below or paste manually" autocomplete="off" />
+          <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
+            <input class="field-input" id="reAnimeSearchInput" placeholder="Search reanime.to…" autocomplete="off" style="flex:1" onkeydown="if(event.key==='Enter')reAnimeSearch()" />
+            <button onclick="reAnimeSearch()" style="padding:8px 18px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);cursor:pointer;font-size:12px;font-weight:700;white-space:nowrap">Search</button>
+          </div>
+          <div id="reAnimeSearchResults" style="margin-top:6px;display:none;border:1px solid var(--border);border-radius:8px;overflow:hidden;max-height:200px;overflow-y:auto;background:var(--surface)"></div>
+          <div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:6px">Requires the ReAnime Python sidecar running at <span id="reAnimeBaseUrl">http://localhost:8000</span></div>
+        </div>
+
         <!-- EP / TYPE / ENDPOINT -->
         <div class="field-row-3" style="margin-bottom:20px">
           <div>
@@ -648,6 +672,11 @@ GET /api/watch?source=<span class="str">dao</span>&malId=<span class="num">21</s
             <div class="source-icon">🪐</div>
             <span class="source-name">Miruro</span>
             <span class="source-url">miruro.tv</span>
+          </div>
+          <div class="source-card" onclick="setSource('reanime',this)" id="src-reanime">
+            <div class="source-icon">🔥</div>
+            <span class="source-name">ReAnime</span>
+            <span class="source-url">reanime.to</span>
           </div>
         </div>
 
@@ -798,6 +827,7 @@ function setSource(s, card) {
   document.querySelectorAll('.source-card').forEach(c => c.classList.remove('active'));
   card.classList.add('active');
   document.getElementById('heavenIdWrap').style.display = s === 'animeheaven' ? 'block' : 'none';
+  document.getElementById('reAnimeSlugWrap').style.display = s === 'reanime' ? 'block' : 'none';
   resetServers();
   updateUrlPreview();
   if (selAnime && document.getElementById('epInput').value) loadServers();
@@ -831,13 +861,18 @@ function resetServers() {
 function getHeavenId() {
   return document.getElementById('heavenIdInput')?.value.trim() || '';
 }
+function getReAnimeSlug() {
+  return document.getElementById('reAnimeSlugInput')?.value.trim() || '';
+}
 
 async function loadServers() {
   const ep = document.getElementById('epInput').value;
   const heavenId = getHeavenId();
+  const reAnimeSlug = getReAnimeSlug();
   if (!ep) return;
-  if (selSource !== 'animeheaven' && !selAnime) return;
+  if (selSource !== 'animeheaven' && selSource !== 'reanime' && !selAnime) return;
   if (selSource === 'animeheaven' && !selAnime && !heavenId) return;
+  if (selSource === 'reanime' && !reAnimeSlug) return;
 
   const label = document.getElementById('serverLoadingLabel');
   label.style.display = 'inline';
@@ -846,9 +881,14 @@ async function loadServers() {
 
   try {
     const base = getBase();
-    const serverUrl = selSource === 'animeheaven' && heavenId
-      ? `${base}/api/servers?source=animeheaven&heavenId=${encodeURIComponent(heavenId)}&ep=${ep}&type=${selType}`
-      : `${base}/api/servers?anilistId=${selAnime.id}&ep=${ep}&type=${selType}&source=${selSource}`;
+    let serverUrl;
+    if (selSource === 'animeheaven' && heavenId) {
+      serverUrl = `${base}/api/servers?source=animeheaven&heavenId=${encodeURIComponent(heavenId)}&ep=${ep}&type=${selType}`;
+    } else if (selSource === 'reanime') {
+      serverUrl = `${base}/api/servers?source=reanime&reAnimeSlug=${encodeURIComponent(reAnimeSlug)}&ep=${ep}&type=${selType}`;
+    } else {
+      serverUrl = `${base}/api/servers?anilistId=${selAnime.id}&ep=${ep}&type=${selType}&source=${selSource}`;
+    }
     const res = await fetch(serverUrl);
     const data = await res.json();
     const servers = data.servers || [];
@@ -948,11 +988,18 @@ function buildUrl() {
   const base = getBase();
   const ep = document.getElementById('epInput').value || '1';
   const heavenId = getHeavenId();
+  const reAnimeSlug = getReAnimeSlug();
   if (selSource === 'animeheaven' && heavenId) {
     if (selEndpoint === 'watch') return `${base}/api/watch?source=animeheaven&heavenId=${encodeURIComponent(heavenId)}&ep=${ep}&type=${selType}`;
     if (selEndpoint === 'servers') return `${base}/api/servers?source=animeheaven&heavenId=${encodeURIComponent(heavenId)}&ep=${ep}&type=${selType}`;
     if (selEndpoint === 'episodes') return `${base}/api/episodes?source=animeheaven&heavenId=${encodeURIComponent(heavenId)}`;
   }
+  if (selSource === 'reanime' && reAnimeSlug) {
+    if (selEndpoint === 'watch') return `${base}/api/watch?source=reanime&reAnimeSlug=${encodeURIComponent(reAnimeSlug)}&ep=${ep}&type=${selType}`;
+    if (selEndpoint === 'servers') return `${base}/api/servers?source=reanime&reAnimeSlug=${encodeURIComponent(reAnimeSlug)}&ep=${ep}&type=${selType}`;
+    if (selEndpoint === 'episodes') return `${base}/api/episodes?source=reanime&reAnimeSlug=${encodeURIComponent(reAnimeSlug)}`;
+  }
+  if (selSource === 'reanime' && !reAnimeSlug) return null;
   if (!selAnime) return null;
   const id = selAnime.id;
   if (selEndpoint === 'watch') {
@@ -969,7 +1016,7 @@ function updateUrlPreview() {
   const el = document.getElementById('urlPreview');
   el.innerHTML = url
     ? `<span style="color:var(--accent2)">GET</span> <span style="color:var(--text)">${url}</span>`
-    : '<span style="color:var(--muted)">Select an anime, or paste an AnimeHeaven id</span>';
+    : '<span style="color:var(--muted)">Select an anime, or paste an AnimeHeaven / ReAnime slug</span>';
 }
 
 // ── FETCH
@@ -1128,6 +1175,54 @@ document.getElementById('heavenIdInput').addEventListener('input', () => {
   updateUrlPreview();
   loadServers();
 });
+
+// ── REANIME slug input triggers preview + server reload
+document.getElementById('reAnimeSlugInput').addEventListener('input', () => {
+  resetServers();
+  updateUrlPreview();
+  const ep = document.getElementById('epInput').value;
+  if (ep) loadServers();
+});
+
+// ── REANIME search via /api/reanime/search
+async function reAnimeSearch() {
+  const q = document.getElementById('reAnimeSearchInput').value.trim();
+  if (!q) return;
+  const resultsEl = document.getElementById('reAnimeSearchResults');
+  resultsEl.style.display = 'block';
+  resultsEl.innerHTML = '<div style="padding:12px 16px;font-size:12px;color:var(--muted)">Searching…</div>';
+  try {
+    const base = getBase();
+    const res = await fetch(`${base}/api/reanime/search?q=${encodeURIComponent(q)}`);
+    const data = await res.json();
+    const results = data.results || [];
+    if (!results.length) {
+      resultsEl.innerHTML = '<div style="padding:12px 16px;font-size:12px;color:var(--muted)">No results found</div>';
+      return;
+    }
+    resultsEl.innerHTML = results.map(r => `
+      <div onclick="selectReAnimeSlug('${r.slug}','${(r.title||'').replace(/'/g,"\\'")}',this)"
+           style="display:flex;align-items:center;gap:12px;padding:10px 16px;cursor:pointer;border-bottom:1px solid var(--border);transition:background 0.1s"
+           onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">
+        ${r.cover ? `<img src="${r.cover}" style="width:28px;height:40px;object-fit:cover;border-radius:4px;flex-shrink:0;border:1px solid var(--border)">` : '<div style="width:28px;flex-shrink:0"></div>'}
+        <div>
+          <div style="font-size:13px;font-weight:700">${r.title || r.slug}</div>
+          <div style="font-family:var(--mono);font-size:10px;color:var(--muted)">${r.slug}</div>
+        </div>
+      </div>`).join('');
+  } catch (e) {
+    resultsEl.innerHTML = `<div style="padding:12px 16px;font-size:12px;color:var(--accent)">Error: ${e.message} — is the ReAnime sidecar running?</div>`;
+  }
+}
+
+function selectReAnimeSlug(slug, title) {
+  document.getElementById('reAnimeSlugInput').value = slug;
+  document.getElementById('reAnimeSearchResults').style.display = 'none';
+  resetServers();
+  updateUrlPreview();
+  const ep = document.getElementById('epInput').value;
+  if (ep) loadServers();
+}
 </script>
 </body>
 </html>
