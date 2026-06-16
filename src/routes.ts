@@ -9,11 +9,10 @@ import { getDaoEpisodes, getDaoServers, getDaoEmbedUrl } from './scrapers/anidao
 import { getWaveEpisodes, getWaveServers, getWaveEmbedUrl } from './scrapers/aniwaves';
 import { getHeavenEpisodes, getHeavenServers, getHeavenStream } from './scrapers/animeheaven';
 import { getMiruroEpisodes, getMiruroServers, getMiruroEmbedUrl } from './scrapers/miruro';
-import { getReAnimeEpisodes, getReAnimeServers, getReAnimeEmbedUrl, getReAnimeStream, searchReAnime, reAnimeHealthCheck } from './scrapers/reanime';
 
 const router = Router();
 
-const SOURCES = ['senshi', 'dao', 'wave', 'animeheaven', 'miruro', 'reanime'] as const;
+const SOURCES = ['senshi', 'dao', 'wave', 'animeheaven', 'miruro'] as const;
 type Source = typeof SOURCES[number];
 
 function publicBase(req: Request): string {
@@ -81,11 +80,6 @@ async function fetchEpisodes(source: Source, siteIds: any, overrides: { heavenId
     const alId = siteIds.anilistId as number;
     return { episodes: await getMiruroEpisodes(alId), siteId: String(alId) };
   }
-  if (source === 'reanime') {
-    const reSlug = (siteIds as any).reAnimeSlug as string | undefined;
-    if (!reSlug) return { episodes: [], siteId: '', error: 'Missing reAnimeSlug — pass ?reAnimeSlug= or use /api/reanime/search first' };
-    return { episodes: await getReAnimeEpisodes(reSlug), siteId: reSlug };
-  }
   return { episodes: [], siteId: '', error: 'Unknown source' };
 }
 
@@ -115,19 +109,13 @@ router.get('/info', async (req: Request, res: Response) => {
 });
 
 router.get('/episodes', async (req: Request, res: Response) => {
-  const { anilistId, malId, source = 'senshi', heavenId, reAnimeSlug } = req.query;
-  if (!anilistId && !malId && !(source === 'animeheaven' && heavenId) && !(source === 'reanime' && reAnimeSlug))
-    return res.status(400).json({ error: 'Provide ?anilistId=, ?malId=, ?heavenId= (AnimeHeaven), or ?reAnimeSlug= (ReAnime)' });
+  const { anilistId, malId, source = 'senshi', heavenId } = req.query;
+  if (!anilistId && !malId && !(source === 'animeheaven' && heavenId)) return res.status(400).json({ error: 'Provide ?anilistId= or ?malId=, or ?heavenId= for AnimeHeaven' });
   if (!SOURCES.includes(source as Source)) return res.status(400).json({ error: `source must be: ${SOURCES.join(', ')}` });
   try {
     if (source === 'animeheaven' && heavenId && !anilistId && !malId) {
       const episodes = await getHeavenEpisodes(String(heavenId));
       return res.json({ anilistId: null, malId: null, title: null, source, siteId: String(heavenId), count: episodes.length, episodes });
-    }
-    if (source === 'reanime' && reAnimeSlug) {
-      const slug = String(reAnimeSlug);
-      const episodes = await getReAnimeEpisodes(slug);
-      return res.json({ anilistId: null, malId: null, title: null, source, siteId: slug, count: episodes.length, episodes });
     }
 
     const alId = await resolveAlId(anilistId as string, malId as string);
@@ -143,25 +131,21 @@ router.get('/episodes', async (req: Request, res: Response) => {
 });
 
 router.get('/servers', async (req: Request, res: Response) => {
-  const { anilistId, malId, ep, type = 'sub', source = 'senshi', heavenId, reAnimeSlug } = req.query;
+  const { anilistId, malId, ep, type = 'sub', source = 'senshi', heavenId } = req.query;
   if (!ep) return res.status(400).json({ error: 'Missing ?ep=' });
-  if (!anilistId && !malId && !(source === 'animeheaven' && heavenId) && !(source === 'reanime' && reAnimeSlug))
-    return res.status(400).json({ error: 'Provide ?anilistId=, ?malId=, ?heavenId= (AnimeHeaven), or ?reAnimeSlug= (ReAnime)' });
+  if (!anilistId && !malId && !(source === 'animeheaven' && heavenId)) return res.status(400).json({ error: 'Provide ?anilistId= or ?malId=, or ?heavenId= for AnimeHeaven' });
   const epNum = parseInt(ep as string);
   if (isNaN(epNum)) return res.status(400).json({ error: '?ep must be a number' });
   if (!SOURCES.includes(source as Source)) return res.status(400).json({ error: `source must be: ${SOURCES.join(', ')}` });
 
   try {
-    let siteIds: any;
-    if (heavenId && source === 'animeheaven') {
-      siteIds = { anilistId: null, malId: null, title: null, siteIds: { animeheaven: String(heavenId) } };
-    } else if (reAnimeSlug && source === 'reanime') {
-      siteIds = { anilistId: null, malId: null, title: null, reAnimeSlug: String(reAnimeSlug), siteIds: {} };
-    } else {
-      const alId = await resolveAlId(anilistId as string, malId as string);
-      if (!alId) return res.status(404).json({ error: 'Could not resolve site IDs' });
-      siteIds = await getSiteIds(alId);
-    }
+    const siteIds = heavenId && source === 'animeheaven'
+      ? { anilistId: null, malId: null, title: null, siteIds: { animeheaven: String(heavenId) } }
+      : await (async () => {
+          const alId = await resolveAlId(anilistId as string, malId as string);
+          if (!alId) return null;
+          return getSiteIds(alId);
+        })();
     if (!siteIds) return res.status(404).json({ error: 'Could not resolve site IDs' });
 
     const epResult = await fetchEpisodes(source as Source, siteIds, { heavenId: heavenId ? String(heavenId) : undefined });
@@ -175,7 +159,6 @@ router.get('/servers', async (req: Request, res: Response) => {
     if (source === 'wave') allServers = await getWaveServers(episode.id);
     if (source === 'animeheaven') allServers = await getHeavenServers(episode.id);
     if (source === 'miruro') allServers = await getMiruroServers(episode.id);
-    if (source === 'reanime') allServers = await getReAnimeServers(episode.id);
 
     const filtered = type === 'all' ? allServers : allServers.filter((s: any) => s.type === type);
     return res.json({
@@ -204,21 +187,17 @@ async function watchHandler(req: Request, res: Response) {
   if (!['sub', 'dub', 'raw'].includes(type)) return res.status(400).json({ error: 'type must be: sub, dub, raw' });
 
   const directHeavenId = source === 'animeheaven' && !id.startsWith('mal-') && !/^\d+$/.test(id);
-  const directReAnimeSlug = source === 'reanime' && !id.startsWith('mal-') && !/^\d+$/.test(id);
-  const anilistId = (directHeavenId || directReAnimeSlug) || id.startsWith('mal-') ? undefined : id;
+  const anilistId = directHeavenId || id.startsWith('mal-') ? undefined : id;
   const malId = id.startsWith('mal-') ? id.replace('mal-', '') : undefined;
 
   try {
-    let siteIds: any;
-    if (directHeavenId) {
-      siteIds = { anilistId: null, malId: null, title: null, siteIds: { animeheaven: id } };
-    } else if (directReAnimeSlug) {
-      siteIds = { anilistId: null, malId: null, title: null, reAnimeSlug: id, siteIds: {} };
-    } else {
-      const alId = await resolveAlId(anilistId, malId);
-      if (!alId) return res.status(404).json({ error: 'Could not resolve anime' });
-      siteIds = await getSiteIds(alId);
-    }
+    const siteIds = directHeavenId
+      ? { anilistId: null, malId: null, title: null, siteIds: { animeheaven: id } }
+      : await (async () => {
+          const alId = await resolveAlId(anilistId, malId);
+          if (!alId) return null;
+          return getSiteIds(alId);
+        })();
     if (!siteIds) return res.status(404).json({ error: 'Could not resolve anime' });
 
     const epResult = await fetchEpisodes(source as Source, siteIds, { heavenId: heavenOverride });
@@ -233,7 +212,6 @@ async function watchHandler(req: Request, res: Response) {
     if (source === 'wave') allServers = await getWaveServers(episode.id);
     if (source === 'animeheaven') allServers = await getHeavenServers(episode.id);
     if (source === 'miruro') allServers = await getMiruroServers(episode.id);
-    if (source === 'reanime') allServers = await getReAnimeServers(episode.id);
 
     let filtered = allServers.filter((s: any) => s.type === type);
     if (!filtered.length) filtered = allServers.filter((s: any) => s.type === 'sub');
@@ -256,37 +234,9 @@ async function watchHandler(req: Request, res: Response) {
       if (source === 'wave') raw = await getWaveEmbedUrl(server.sourceId);
       if (source === 'animeheaven') raw = await getHeavenStream(server.sourceId);
       if (source === 'miruro') raw = await getMiruroEmbedUrl(server.sourceId);
-      if (source === 'reanime') raw = await getReAnimeEmbedUrl(server.sourceId);
       if (raw) { embedResult = raw; usedServer = server.name; break; }
     }
     if (!embedResult) return res.status(502).json({ error: 'All servers failed' });
-
-    // ReAnime: decrypt via sidecar and return HLS + subtitles
-    if (source === 'reanime') {
-      const stream = await getReAnimeStream(embedResult.embedUrl);
-      if (!stream) return res.status(502).json({ error: 'ReAnime stream decrypt failed — sidecar may be down or token expired' });
-      return res.json({
-        anilistId: siteIds.anilistId,
-        malId: siteIds.malId,
-        title: siteIds.title,
-        episode: epNum,
-        type,
-        source,
-        siteId: epResult.siteId,
-        server: usedServer,
-        availableServers: filtered.map((s: any) => s.name),
-        embedUrl: stream.embedUrl,
-        m3u8: stream.streamUrl,
-        hlsProxyUrl: proxiedHlsUrl(req, stream.streamUrl, 'https://flixcloud.cc/'),
-        playbackMode: 'hls',
-        iframeOnly: false,
-        subtitles: stream.subtitles,
-        thumbnails_vtt: stream.thumbnails_vtt,
-        intro: stream.intro_chapter,
-        outro: stream.outro_chapter,
-        note: 'Stream decrypted via ReAnime sidecar. Token is one-time-use; do not cache.',
-      });
-    }
 
     if (source === 'animeheaven') {
       return res.json({
@@ -310,6 +260,32 @@ async function watchHandler(req: Request, res: Response) {
         iframeOnly: false,
         subtitles: [],
         note: 'AnimeHeaven currently exposes direct MP4 sources, not m3u8/HLS.',
+      });
+    }
+
+    // Miruro streams are always direct HLS — skip megacloud resolver entirely.
+    // The embedUrl IS the m3u8 regardless of whether the path contains ".m3u8",
+    // since CDN providers (moo, bonk, bee, etc.) use extension-less signed URLs.
+    if (source === 'miruro') {
+      const m3u8Url = embedResult.embedUrl as string;
+      return res.json({
+        anilistId: siteIds.anilistId,
+        malId: siteIds.malId,
+        title: siteIds.title,
+        episode: epNum,
+        type,
+        source,
+        server: usedServer,
+        availableServers: filtered.map((s: any) => s.name),
+        embedUrl: m3u8Url,
+        m3u8: m3u8Url,
+        hlsProxyUrl: proxiedHlsUrl(req, m3u8Url, embedResult.referer ?? 'https://www.miruro.tv/'),
+        playbackMode: 'hls',
+        iframeOnly: false,
+        subtitles: [],
+        intro: null,
+        outro: null,
+        note: null,
       });
     }
 
@@ -365,8 +341,9 @@ router.get('/proxy/hls', async (req: Request, res: Response) => {
       responseType: 'arraybuffer',
       timeout: 15000,
       headers: {
-        'User-Agent': 'Mozilla/5.0',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36',
         'Accept': '*/*',
+        'Accept-Language': 'en-US,en;q=0.9',
         'Referer': referer,
         'Origin': origin,
       },
@@ -432,55 +409,21 @@ router.get('/proxy/video', async (req: Request, res: Response) => {
   }
 });
 
-router.get('/health', async (_req, res) => {
-  const reanime = await reAnimeHealthCheck();
-  res.json({
-    status: 'ok',
-    version: '1.1.0-reanime',
-    sources: SOURCES,
-    uptime: Math.floor(process.uptime()),
-    cache: cacheStats(),
-    timestamp: new Date().toISOString(),
-    sidecars: { reanime },
-  });
-});
-
-// ── ReAnime-specific helpers ──────────────────────────────────
-
-// Search reanime.to by title → returns slugs you can use as siteId with source=reanime
-router.get('/reanime/search', async (req: Request, res: Response) => {
-  const q = req.query.q as string;
-  const limit = parseInt((req.query.limit as string) || '10');
-  if (!q) return res.status(400).json({ error: 'Missing ?q=' });
-  try {
-    const results = await searchReAnime(q, limit);
-    return res.json({ query: q, count: results.length, results });
-  } catch (e) {
-    return res.status(500).json({ error: 'ReAnime search failed', detail: String(e) });
-  }
-});
-
-// Shortcut watch route: pass ?reAnimeSlug=one-piece-xamk74 directly
-// GET /api/watch?source=reanime&reAnimeSlug=one-piece-xamk74&ep=1&type=sub
 router.get('/watch', async (req: Request, res: Response) => {
-  const { anilistId, malId, heavenId, reAnimeSlug, ep, type = 'sub', source = 'senshi', server } = req.query;
+  const { anilistId, malId, heavenId, ep, type = 'sub', source = 'senshi', server } = req.query;
   if (!ep) return res.status(400).json({ error: 'Missing ?ep=' });
-  if (source === 'reanime' && !reAnimeSlug) return res.status(400).json({ error: 'source=reanime requires ?reAnimeSlug=' });
-  if (!anilistId && !malId && !(source === 'animeheaven' && heavenId) && !(source === 'reanime' && reAnimeSlug))
-    return res.status(400).json({ error: 'Provide ?anilistId=, ?malId=, ?heavenId= (AnimeHeaven), or ?reAnimeSlug= (ReAnime)' });
-
-  const id = heavenId && source === 'animeheaven'
-    ? String(heavenId)
-    : reAnimeSlug && source === 'reanime'
-      ? String(reAnimeSlug)
-      : anilistId ? String(anilistId) : `mal-${malId}`;
-
+  if (!anilistId && !malId && !(source === 'animeheaven' && heavenId)) return res.status(400).json({ error: 'Provide ?anilistId= or ?malId=, or ?heavenId= for AnimeHeaven' });
+  const id = heavenId && source === 'animeheaven' ? String(heavenId) : anilistId ? String(anilistId) : `mal-${malId}`;
   req.params.source = String(source);
   req.params.id = id;
   req.params.ep = String(ep);
   req.params.type = String(type);
   if (server) req.query.server = server;
   return watchHandler(req, res);
+});
+
+router.get('/health', (_req, res) => {
+  res.json({ status: 'ok', version: '1.0.1-miruro-debug', sources: SOURCES, uptime: Math.floor(process.uptime()), cache: cacheStats(), timestamp: new Date().toISOString() });
 });
 
 export default router;
