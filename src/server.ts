@@ -7,6 +7,14 @@ import routes from './routes';
 const app = express();
 const PORT = parseInt(process.env.PORT || '3000');
 
+// Railway (and most PaaS hosts) sit behind a reverse proxy that sets
+// X-Forwarded-For. Without this, Express doesn't trust that header, and
+// express-rate-limit throws ERR_ERL_UNEXPECTED_X_FORWARDED_FOR on every
+// /api request — which was breaking requests before they ever reached the
+// route handlers (senshi servers/embeds included). `1` trusts exactly one
+// hop (the platform's own proxy), which is correct for Railway's setup.
+app.set('trust proxy', 1);
+
 app.use(cors());
 app.use(express.json());
 
