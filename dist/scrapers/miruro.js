@@ -171,14 +171,30 @@ async function getMiruroEmbedUrl(sourceId) {
         const streams = data?.streams;
         if (!Array.isArray(streams) || streams.length === 0)
             return null;
-        // Prefer an active stream if marked, otherwise the highest-quality one.
-        // We do NOT probe/prefetch the URL — providers like bonk, moo, and bee
-        // return single-use or referer-sensitive signed URLs that get consumed or
-        // invalidated by a preflight GET, making them unplayable by the time the
-        // client requests them. Trust the URL as-is and let the HLS proxy handle it.
-        const sorted = [...streams]
-            .filter((s) => typeof s?.url === 'string' && /^https?:\/\//i.test(s.url))
-            .sort((a, b) => {
+        // Several providers (bonk, bee, ...) mix `type: "embed"` entries (links to
+        // a player *page*, not a playlist) into the same `streams` array alongside
+        // the real `type: "hls"` master.m3u8. The old filter only checked that
+        // `url` was an absolute http(s) string, so embed-page URLs passed through
+        // and could outrank or tie with the actual HLS stream once `isActive`/
+        // `quality` were absent on both. We must hard-filter to HLS first; an
+        // embed-page URL is never usable as the embedUrl we hand back here.
+        //
+        // We do NOT probe/prefetch the chosen URL — referer-sensitive or
+        // single-use signed URLs can get consumed or invalidated by a preflight
+        // GET, making them unplayable by the time the client requests them.
+        // Trust the URL as-is and let the HLS proxy handle it.
+        const hlsStreams = streams.filter((s) => typeof s?.url === 'string' && /^https?:\/\//i.test(s.url) && s?.type === 'hls');
+        const candidates = hlsStreams.length > 0
+            ? hlsStreams
+            : streams.filter((s) => typeof s?.url === 'string' && /^https?:\/\//i.test(s.url));
+        // Prefer `default`, then `isActive`, then highest quality — `default` is
+        // the most reliable signal across providers (set true on the correct HLS
+        // stream for both bonk and bee even when `isActive` is absent entirely).
+        const sorted = [...candidates].sort((a, b) => {
+            if (a.default && !b.default)
+                return -1;
+            if (!a.default && b.default)
+                return 1;
             if (a.isActive && !b.isActive)
                 return -1;
             if (!a.isActive && b.isActive)
@@ -207,7 +223,7 @@ async function getMiruroEmbedUrl(sourceId) {
         return {
             embedUrl: best.url,
             serverName: provider,
-            type: 'hls',
+            type: best.type === 'hls' ? 'hls' : 'embed',
             referer,
         };
     }
