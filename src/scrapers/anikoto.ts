@@ -20,6 +20,19 @@ const ajax = makeAjaxClient(BASE, BASE + '/');
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
+// Matches anikoto-API's own DEFAULT_HEADERS exactly — keeping this in lockstep
+// with the reference implementation avoids fingerprint-based failures that are
+// otherwise very hard to diagnose without live access to the site.
+const DEFAULT_HEADERS: Record<string, string> = {
+  'User-Agent': UA,
+  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Accept-Encoding': 'gzip, deflate, br',
+  Connection: 'keep-alive',
+  'Cache-Control': 'no-cache',
+  Referer: BASE + '/',
+};
+
 const KIWI_MAPPER_URLS = [
   'https://mapper.nekostream.site/api/mal',
   'https://mapper.mewcdn.online/api/mal',
@@ -241,7 +254,7 @@ export async function getAnikotoServers(episodeId: string): Promise<AnikotoServe
 
         servers.push({
           name,
-          sourceId: `${slug}::${epNumStr}::reg::${linkId}::${svId}`,
+          sourceId: `${slug}::${epNumStr}::reg::${linkId}::${svId}::${encodeURIComponent(name)}`,
           type,
         });
       });
@@ -271,7 +284,7 @@ export async function getAnikotoServers(episodeId: string): Promise<AnikotoServe
 async function parseM3u8Subtitles(m3u8Url: string, referer: string): Promise<AnikotoSubtitle[]> {
   try {
     const { data } = await axios.get<string>(m3u8Url, {
-      headers: { 'User-Agent': UA, Referer: referer },
+      headers: { ...DEFAULT_HEADERS, Referer: referer },
       timeout: 5000,
     });
     const tracks: AnikotoSubtitle[] = [];
@@ -296,7 +309,7 @@ async function resolveKiwi(malId: string, epNum: string, timestamp: string, type
     try {
       const mapperUrl = `${mapperBase}/${encodeURIComponent(malId)}/${encodeURIComponent(epNum)}/${encodeURIComponent(timestamp)}`;
       const { data } = await axios.get(mapperUrl, {
-        headers: { 'User-Agent': UA, Referer: BASE + '/', Origin: BASE },
+        headers: { ...DEFAULT_HEADERS, Referer: BASE + '/', Origin: BASE },
         timeout: 8000,
       });
       if (!data || typeof data !== 'object') continue;
@@ -334,6 +347,45 @@ async function resolveKiwi(malId: string, epNum: string, timestamp: string, type
   return null;
 }
 
+// ── Vidstream / VidPlay (domain2_url + save_data.php pattern) ──
+// anikoto's reference implementation tries this FIRST for any server whose
+// name contains "vidstream", "vidplay", or "vid-", before falling back to
+// the standard megacloud/megaplay chain below.
+async function resolveVidstream(embedUrl: string, referer: string): Promise<AnikotoStream | null> {
+  try {
+    const { data: html } = await axios.get<string>(embedUrl, {
+      headers: { ...DEFAULT_HEADERS, Referer: referer },
+      timeout: 8000,
+    });
+
+    const epIdMatch = html.match(/data-ep-id=["'](\d+)["']/);
+    const typeMatch = html.match(/type:\s*'(\w+)'/);
+    const domain2Match = html.match(/domain2_url:\s*'([^']+)'/);
+    if (!epIdMatch || !typeMatch || !domain2Match) return null;
+
+    const epId = epIdMatch[1];
+    const epType = typeMatch[1];
+    const domain2 = domain2Match[1].trim();
+
+    const saveDataUrl = `${domain2}/save_data.php?id=${epId}-${epType}`;
+    const { data } = await axios.get(saveDataUrl, {
+      headers: { ...DEFAULT_HEADERS, Referer: referer },
+      timeout: 8000,
+    });
+
+    const sources = data?.data?.sources ?? [];
+    const subtitles: AnikotoSubtitle[] = (data?.data?.tracks ?? [])
+      .filter((t: any) => t?.file)
+      .map((t: any) => ({ url: t.file, lang: t.label ?? 'Unknown', default: Boolean(t.default) }));
+    const m3u8: string | undefined = sources[0]?.url;
+    if (!m3u8) return null;
+
+    return { embedUrl, m3u8, referer: domain2 + '/', subtitles, serverName: 'Vidstream', type: 'hls' };
+  } catch {
+    return null;
+  }
+}
+
 // ── Megacloud (anikoto's current embed host: megacloud.blog) ───
 let _megacloudKeysCache: Record<string, string> | null = null;
 let _megacloudKeysCacheAt = 0;
@@ -363,7 +415,7 @@ async function doMegacloud(embedUrl: string, html: string, referer: string, serv
   const sourcesUrl = `${origin}/embed-2/v3/e-1/getSources?id=${sId}&_k=${nonce}`;
 
   const { data } = await axios.get(sourcesUrl, {
-    headers: { 'User-Agent': UA, Accept: '*/*', 'X-Requested-With': 'XMLHttpRequest', Referer: referer },
+    headers: { ...DEFAULT_HEADERS, Accept: '*/*', 'X-Requested-With': 'XMLHttpRequest', Referer: referer },
     timeout: 8000,
   });
 
@@ -401,7 +453,7 @@ async function doMegaplay(host: string, html: string, referer: string, serverNam
   const id = match[1];
 
   const { data } = await axios.get(`https://${host}/stream/getSources?id=${id}`, {
-    headers: { 'User-Agent': UA, 'X-Requested-With': 'XMLHttpRequest', Referer: referer },
+    headers: { ...DEFAULT_HEADERS, 'X-Requested-With': 'XMLHttpRequest', Referer: referer },
     timeout: 8000,
   });
 
@@ -443,20 +495,20 @@ async function resolveAnikotoEmbed(embedUrl: string, serverName: string): Promis
     const url = embedUrl.replace('vidwish.live', 'megaplay.buzz').replace('megacloud.bloggy.click', 'megaplay.buzz');
     const host = new URL(url).host;
     const referer = `https://${host}/`;
-    const { data: html } = await axios.get<string>(url, { headers: { 'User-Agent': UA, Referer: referer }, timeout: 8000 });
+    const { data: html } = await axios.get<string>(url, { headers: { ...DEFAULT_HEADERS, Referer: referer }, timeout: 8000 });
     return doMegaplay(host, html, referer, serverName);
   }
 
   if (hostname.includes('megacloud.blog')) {
     const referer = new URL(embedUrl).origin + '/';
-    const { data: html } = await axios.get<string>(embedUrl, { headers: { 'User-Agent': UA, Referer: referer }, timeout: 8000 });
+    const { data: html } = await axios.get<string>(embedUrl, { headers: { ...DEFAULT_HEADERS, Referer: referer }, timeout: 8000 });
     return doMegacloud(embedUrl, html, referer, serverName);
   }
 
   if (hostname.includes('vidtube.site')) {
     const host = new URL(embedUrl).host;
     const referer = `https://${host}/`;
-    const { data: html } = await axios.get<string>(embedUrl, { headers: { 'User-Agent': UA, Referer: referer }, timeout: 8000 });
+    const { data: html } = await axios.get<string>(embedUrl, { headers: { ...DEFAULT_HEADERS, Referer: referer }, timeout: 8000 });
     return doMegaplay(host, html, referer, serverName);
   }
 
@@ -467,7 +519,7 @@ async function resolveAnikotoEmbed(embedUrl: string, serverName: string): Promis
     let referer = `https://${host}/`;
     let html: string;
     try {
-      const res = await axios.get<string>(currentUrl, { headers: { 'User-Agent': UA, Referer: referer }, timeout: 8000 });
+      const res = await axios.get<string>(currentUrl, { headers: { ...DEFAULT_HEADERS, Referer: referer }, timeout: 8000 });
       html = res.data;
     } catch {
       return null;
@@ -503,19 +555,35 @@ export async function getAnikotoEmbedUrl(sourceId: string): Promise<AnikotoStrea
     return resolveKiwi(malId, epNum, timestamp, (type as 'sub' | 'dub') || 'sub').catch(() => null);
   }
 
-  const [slug, epNumStr, , linkId, svId] = parts;
+  const [slug, epNumStr, , linkId, svId, encodedName] = parts;
   if (!slug || !linkId) return null;
+  const serverName = encodedName ? decodeURIComponent(encodedName) : 'anikoto';
 
   try {
     const svParam = svId ? { sv: svId } : {};
+    const epReferer = `${BASE}/watch/${slug}/ep-${epNumStr}`;
     const res = await ajax.get('/ajax/server', {
       params: { get: linkId, ...svParam },
-      headers: { Referer: `${BASE}/watch/${slug}/ep-${epNumStr}` },
+      headers: { Referer: epReferer },
     });
     const embedUrl: string | undefined = res.data?.result?.url;
     if (!embedUrl) return null;
 
-    return await resolveAnikotoEmbed(embedUrl, 'anikoto');
+    // anikoto's reference implementation tries the VidStream save_data.php
+    // path FIRST for any server named like Vidstream/VidPlay/Vid-*, falling
+    // back to the standard megacloud/megaplay chain if that doesn't pan out.
+    const lower = serverName.toLowerCase();
+    const isVidstreamLike = lower.includes('vidstream') || lower.includes('vidplay') || lower.includes('vid-');
+
+    let result: AnikotoStream | null = null;
+    if (isVidstreamLike) {
+      result = await resolveVidstream(embedUrl, epReferer).catch(() => null);
+      if (result) result.serverName = serverName;
+    }
+    if (!result) {
+      result = await resolveAnikotoEmbed(embedUrl, serverName);
+    }
+    return result;
   } catch {
     return null;
   }
