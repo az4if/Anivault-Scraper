@@ -988,39 +988,17 @@ function primaryEmbedUrl(data) {
 function renderEmbedPreview(data) {
   const ep = document.getElementById('embedPreview');
   const embedUrl = primaryEmbedUrl(data);
-  // Prefer direct URL — browser's residential IP is not blocked by CDNs like ninstream.
-  // Fall back to proxy only if no direct URL is available.
-  const hlsUrl = data.hlsDirectUrl || data.m3u8 || data.hlsProxyUrl || (embedUrl && embedUrl.includes('.m3u8') ? embedUrl : '');
+  const hlsUrl = data.hlsProxyUrl || data.m3u8 || (embedUrl && embedUrl.includes('.m3u8') ? embedUrl : '');
 
   if (hlsUrl) {
     ep.innerHTML = `<video id="hlsPreview" controls playsinline></video>`;
     const video = document.getElementById('hlsPreview');
     if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      // Safari native HLS — can't set custom headers, but Safari won't be
-      // blocked by ninstream's IP check since it plays from the client.
       video.src = hlsUrl;
     } else if (window.Hls && Hls.isSupported()) {
-      // Pass the referer hint from the API so HLS.js can include it on XHR
-      // requests. Browsers can't set Referer directly via XHR, but we can
-      // set it as a custom header on the playlist/segment fetches.
-      // Note: browsers block setting 'Referer' via setRequestHeader for
-      // security — so we piggyback it as 'X-Referer' and handle it server-side
-      // if needed, or simply load direct (CDN allows browser IPs without strict header check).
-      const hls = new Hls({ enableWorker: false });
+      const hls = new Hls();
       hls.loadSource(hlsUrl);
       hls.attachMedia(video);
-      hls.on(Hls.Events.ERROR, function(event, errData) {
-        if (errData.fatal) {
-          // Direct URL failed (maybe CDN needs proxy after all) — fall back to hlsProxyUrl
-          if (data.hlsProxyUrl && hlsUrl !== data.hlsProxyUrl) {
-            console.warn('[HLS] Direct playback failed, falling back to proxy:', errData.details);
-            hls.destroy();
-            const hls2 = new Hls({ enableWorker: false });
-            hls2.loadSource(data.hlsProxyUrl);
-            hls2.attachMedia(video);
-          }
-        }
-      });
     } else {
       ep.innerHTML = '<div class="embed-placeholder"><div class="embed-placeholder-icon">!</div><span>HLS playback is not supported in this browser</span></div>';
     }
