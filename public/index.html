@@ -288,28 +288,7 @@ pre { padding:20px; overflow-x:auto; font-family:var(--mono); font-size:12px; li
         <div class="sic-row"><span class="sic-row-label">Embeds</span><span class="sic-row-val">Megacloud, Vidstreaming</span></div>
         <div class="sic-row"><span class="sic-row-label">Audio</span><span class="sic-row-val">Sub, Dub, Raw</span></div>
       </div>
-      <div class="source-info-card">
-        <div class="sic-header">
-          <div class="sic-icon">🎌</div>
-          <div><div class="sic-name">AniWaves</div><div class="sic-url">aniwaves.ru</div></div>
-          <span class="sic-tag verify">Verify selectors</span>
-        </div>
-        <div class="sic-row"><span class="sic-row-label">Key</span><span class="sic-row-val">wave</span></div>
-        <div class="sic-row"><span class="sic-row-label">ID format</span><span class="sic-row-val">Zoro-style slug</span></div>
-        <div class="sic-row"><span class="sic-row-label">Embeds</span><span class="sic-row-val">Megacloud, iframe</span></div>
-        <div class="sic-row"><span class="sic-row-label">Audio</span><span class="sic-row-val">Sub, Dub</span></div>
-      </div>
-      <div class="source-info-card">
-        <div class="sic-header">
-          <div class="sic-icon">⚔️</div>
-          <div><div class="sic-name">AniDao</div><div class="sic-url">anidao.to</div></div>
-          <span class="sic-tag verify">Verify selectors</span>
-        </div>
-        <div class="sic-row"><span class="sic-row-label">Key</span><span class="sic-row-val">dao</span></div>
-        <div class="sic-row"><span class="sic-row-label">ID format</span><span class="sic-row-val">Zoro-style slug</span></div>
-        <div class="sic-row"><span class="sic-row-label">Embeds</span><span class="sic-row-val">Various iframes</span></div>
-        <div class="sic-row"><span class="sic-row-label">Audio</span><span class="sic-row-val">Sub, Dub</span></div>
-      </div>
+
       <div class="source-info-card">
         <div class="sic-header">
           <div class="sic-icon">🎭</div>
@@ -538,7 +517,7 @@ GET /api/watch?source=<span class="str">dao</span>&malId=<span class="num">21</s
           <pre>{
   <span class="key">"status"</span>: <span class="str">"ok"</span>,
   <span class="key">"version"</span>: <span class="str">"1.0.0"</span>,
-  <span class="key">"sources"</span>: [<span class="str">"senshi"</span>, <span class="str">"dao"</span>, <span class="str">"wave"</span>, <span class="str">"animeheaven"</span>, <span class="str">"miruro"</span>],
+  <span class="key">"sources"</span>: [<span class="str">"senshi"</span>, <span class="str">"animeheaven"</span>, <span class="str">"miruro"</span>],
   <span class="key">"uptime"</span>: <span class="num">3600</span>,
   <span class="key">"timestamp"</span>: <span class="str">"2026-06-04T12:00:00.000Z"</span>
 }</pre>
@@ -629,16 +608,7 @@ GET /api/watch?source=<span class="str">dao</span>&malId=<span class="num">21</s
             <span class="source-name">Senshi</span>
             <span class="source-url">senshi.live</span>
           </div>
-          <div class="source-card" onclick="setSource('wave',this)" id="src-wave">
-            <div class="source-icon">🎌</div>
-            <span class="source-name">AniWaves</span>
-            <span class="source-url">aniwaves.ru</span>
-          </div>
-          <div class="source-card" onclick="setSource('dao',this)" id="src-dao">
-            <div class="source-icon">⚔️</div>
-            <span class="source-name">AniDao</span>
-            <span class="source-url">anidao.to</span>
-          </div>
+
           <div class="source-card" onclick="setSource('animeheaven',this)" id="src-animeheaven">
             <div class="source-icon">🎭</div>
             <span class="source-name">AnimeHeaven</span>

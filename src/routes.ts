@@ -5,14 +5,12 @@ import { cacheStats } from './utils/cache';
 import { resolveEmbed } from './resolvers/megacloud';
 
 import { getEpisodes, getServers, getEmbedUrl } from './scrapers/senshi';
-import { getDaoEpisodes, getDaoServers, getDaoEmbedUrl } from './scrapers/anidao';
-import { getWaveEpisodes, getWaveServers, getWaveEmbedUrl } from './scrapers/aniwaves';
 import { getHeavenEpisodes, getHeavenServers, getHeavenStream } from './scrapers/animeheaven';
 import { getMiruroEpisodes, getMiruroServers, getMiruroEmbedUrl } from './scrapers/miruro';
 
 const router = Router();
 
-const SOURCES = ['senshi', 'dao', 'wave', 'animeheaven', 'miruro'] as const;
+const SOURCES = ['senshi', 'animeheaven', 'miruro'] as const;
 type Source = typeof SOURCES[number];
 
 function publicBase(req: Request): string {
@@ -62,14 +60,6 @@ async function fetchEpisodes(source: Source, siteIds: any, overrides: { heavenId
     if (!siteIds.malId) return { episodes: [], siteId: '', error: 'Missing MAL ID for Senshi' };
     const senshiId = String(siteIds.malId);
     return { episodes: await getEpisodes(senshiId), siteId: senshiId };
-  }
-  if (source === 'dao') {
-    if (!zoroId) return { episodes: [], siteId: '', error: 'Not indexed on AniDao' };
-    return { episodes: await getDaoEpisodes(zoroId), siteId: zoroId };
-  }
-  if (source === 'wave') {
-    if (!zoroId) return { episodes: [], siteId: '', error: 'Not indexed on AniWaves' };
-    return { episodes: await getWaveEpisodes(zoroId), siteId: zoroId };
   }
   if (source === 'animeheaven') {
     if (!heavenId) return { episodes: [], siteId: '', error: 'Not indexed on AnimeHeaven' };
@@ -155,8 +145,6 @@ router.get('/servers', async (req: Request, res: Response) => {
 
     let allServers: any[] = [];
     if (source === 'senshi') allServers = await getServers(episode.id);
-    if (source === 'dao') allServers = await getDaoServers(episode.id);
-    if (source === 'wave') allServers = await getWaveServers(episode.id);
     if (source === 'animeheaven') allServers = await getHeavenServers(episode.id);
     if (source === 'miruro') allServers = await getMiruroServers(episode.id);
 
@@ -208,8 +196,6 @@ async function watchHandler(req: Request, res: Response) {
 
     let allServers: any[] = [];
     if (source === 'senshi') allServers = await getServers(episode.id);
-    if (source === 'dao') allServers = await getDaoServers(episode.id);
-    if (source === 'wave') allServers = await getWaveServers(episode.id);
     if (source === 'animeheaven') allServers = await getHeavenServers(episode.id);
     if (source === 'miruro') allServers = await getMiruroServers(episode.id);
 
@@ -229,8 +215,6 @@ async function watchHandler(req: Request, res: Response) {
     for (const server of filtered) {
       let raw: any = null;
       if (source === 'senshi') raw = await getEmbedUrl(server.sourceId);
-      if (source === 'dao') raw = await getDaoEmbedUrl(server.sourceId);
-      if (source === 'wave') raw = await getWaveEmbedUrl(server.sourceId);
       if (source === 'animeheaven') raw = await getHeavenStream(server.sourceId);
       if (source === 'miruro') raw = await getMiruroEmbedUrl(server.sourceId);
       if (raw) { embedResult = raw; usedServer = server.name; break; }
