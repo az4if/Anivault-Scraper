@@ -10,8 +10,8 @@ import { cacheGet, cacheSet } from '../utils/cache';
 //   /ajax/episode/list/{id}    → episode list fragment (AJAX fallback)
 //   /ajax/server/list?servers= → server list fragment
 //   /ajax/server?get=&sv=      → resolves a server to its embed URL
-//   (Kiwi Mapper side-channel removed — already covered via the miruro
-//   scraper's own kiwi provider, no need to resolve it twice here.)
+//   + a "Kiwi Mapper" side-channel keyed by MAL id, independent of the
+//     regular server list, that points at a CDN not behind bot-protection.
 // ══════════════════════════════════════════════════════════════
 
 const BASE = 'https://anikoto.net';
@@ -34,12 +34,17 @@ const DEFAULT_HEADERS: Record<string, string> = {
   Referer: BASE + '/',
 };
 
+const KIWI_MAPPER_URLS = [
+  'https://mapper.nekostream.site/api/mal',
+  'https://mapper.mewcdn.online/api/mal',
+];
+
 // Every failure point in the embed-resolution chain below logs through this,
 // so a "not playable" report can be traced to an exact step from Railway logs
 // instead of just a silent null. Grep for "[anikoto]".
 // IMPORTANT: uses util.inspect with depth:null — plain console.error(obj)
-// truncates nested objects at depth 2, which previously hid fields we
-// needed to see in nested error/response shapes.
+// truncates nested objects at depth 2, which previously hid exactly the
+// field we needed to see (the Kiwi mapper's nested `download` shape).
 function log(label: string, extra?: any) {
   if (extra !== undefined) console.error(`[anikoto] ${label}`, inspect(extra, { depth: null, colors: false, maxArrayLength: 20 }));
   else console.error(`[anikoto] ${label}`);
@@ -237,7 +242,8 @@ export async function getAnikotoEpisodes(slug: string): Promise<AnikotoEpisode[]
   return raw.map((ep) => ({
     num: ep.num,
     // sourceId for getAnikotoServers() — carries everything needed to fetch
-    // the server list (data-ids) without a second page fetch.
+    // the server list (data-ids) and the Kiwi side-channel (data-mal + data-timestamp)
+    // without a second page fetch.
     id: `${slug}::${ep.num}::${ep.dataIds ?? ''}::${ep.dataMal ?? ''}::${ep.dataTimestamp ?? ''}`,
     title: ep.title,
   }));
@@ -248,7 +254,7 @@ export async function getAnikotoEpisodes(slug: string): Promise<AnikotoEpisode[]
 // ══════════════════════════════════════════════════════════════
 
 export async function getAnikotoServers(episodeId: string): Promise<AnikotoServer[]> {
-  const [slug, epNumStr, dataIds] = episodeId.split('::');
+  const [slug, epNumStr, dataIds, dataMal, dataTimestamp] = episodeId.split('::');
   if (!slug || !epNumStr) {
     log('getAnikotoServers: malformed episodeId', episodeId);
     return [];
@@ -288,12 +294,124 @@ export async function getAnikotoServers(episodeId: string): Promise<AnikotoServe
     }
   }
 
+  // Kiwi Mapper side-channel — independent CDN, requires MAL id + timestamp
+  if (dataMal && dataTimestamp) {
+    for (const type of ['sub', 'dub'] as const) {
+      servers.push({
+        name: `Kiwi Stream (${type})`,
+        sourceId: `kiwi::${dataMal}::${epNumStr}::${dataTimestamp}::${type}`,
+        type,
+      });
+    }
+  }
+
   return servers;
 }
 
 // ══════════════════════════════════════════════════════════════
 // EMBED / STREAM RESOLUTION
 // ══════════════════════════════════════════════════════════════
+
+async function parseM3u8Subtitles(m3u8Url: string, referer: string): Promise<AnikotoSubtitle[]> {
+  try {
+    const { data } = await axios.get<string>(m3u8Url, {
+      headers: { ...DEFAULT_HEADERS, Referer: referer },
+      timeout: 5000,
+    });
+    const tracks: AnikotoSubtitle[] = [];
+    for (const line of data.split('\n')) {
+      if (!line.startsWith('#EXT-X-MEDIA') || !line.includes('TYPE=SUBTITLES')) continue;
+      const uri = line.match(/URI="([^"]+)"/)?.[1];
+      if (!uri) continue;
+      const label = line.match(/NAME="([^"]+)"/)?.[1];
+      const isDefault = /DEFAULT=YES/i.test(line);
+      const fullUri = uri.startsWith('http') ? uri : new URL(uri, m3u8Url).toString();
+      tracks.push({ url: fullUri, lang: label || 'Unknown', default: isDefault });
+    }
+    return tracks;
+  } catch {
+    return [];
+  }
+}
+
+// The mapper's documented shape is `{ [server]: { sub: { url } } }`, but live
+// responses have been observed nesting the actual code one level deeper under
+// `download` (e.g. `{ sub: { download: { url } } }` or keyed by quality under
+// `download`). This checks the direct shape first, then probes one level into
+// `download` for anything that looks like a server code.
+function extractServerCode(entry: any): string | null {
+  if (!entry || typeof entry !== 'object') return null;
+  if (typeof entry.url === 'string') return entry.url;
+
+  const nested = entry.download;
+  if (nested) {
+    if (typeof nested === 'string') return nested;
+    if (typeof nested === 'object') {
+      if (typeof nested.url === 'string') return nested.url;
+      for (const v of Object.values(nested)) {
+        if (typeof v === 'string') return v;
+        if (v && typeof v === 'object' && typeof (v as any).url === 'string') return (v as any).url;
+      }
+    }
+  }
+  return null;
+}
+
+// ── Kiwi Mapper ──────────────────────────────────────────────
+async function resolveKiwi(malId: string, epNum: string, timestamp: string, type: 'sub' | 'dub'): Promise<AnikotoStream | null> {
+  for (const mapperBase of KIWI_MAPPER_URLS) {
+    try {
+      const mapperUrl = `${mapperBase}/${encodeURIComponent(malId)}/${encodeURIComponent(epNum)}/${encodeURIComponent(timestamp)}`;
+      const { data } = await axios.get(mapperUrl, {
+        headers: { ...DEFAULT_HEADERS, Referer: BASE + '/', Origin: BASE },
+        timeout: 8000,
+      });
+      if (!data || typeof data !== 'object') {
+        log(`kiwi: ${mapperBase} returned non-object`, data);
+        continue;
+      }
+
+      let serverCode: string | null = null;
+      for (const key of Object.keys(data)) {
+        if (key === 'status') continue;
+        const entry = data[key]?.[type];
+        const code = extractServerCode(entry);
+        if (code) {
+          serverCode = code;
+          break;
+        }
+      }
+      if (!serverCode) {
+        log(`kiwi: ${mapperBase} had no extractable "${type}" code`, data);
+        continue;
+      }
+
+      const serverRes = await ajax.get('/ajax/server', { params: { get: serverCode } });
+      let embedUrl: string | null = serverRes.data?.result?.url ?? null;
+      if (!embedUrl) {
+        log('kiwi: /ajax/server?get= returned no url', { serverCode, response: serverRes.data });
+        continue;
+      }
+
+      if (embedUrl.includes('#')) {
+        try {
+          embedUrl = Buffer.from(embedUrl.split('#')[1], 'base64').toString('utf-8');
+        } catch (err) {
+          log('kiwi: base64 decode of embedUrl fragment failed', errInfo(err));
+        }
+      }
+
+      const referer = 'https://kwik.cx2.mewcdn.online/';
+      const subtitles = await parseM3u8Subtitles(embedUrl, referer);
+      log(`kiwi: resolved via ${mapperBase}`, { embedUrl });
+      return { embedUrl, m3u8: embedUrl, referer, subtitles, serverName: 'Kiwi Stream', type: 'hls' };
+    } catch (err) {
+      log(`kiwi: ${mapperBase} threw`, errInfo(err));
+    }
+  }
+  log('kiwi: all mapper mirrors failed');
+  return null;
+}
 
 // ── Vidstream / VidPlay (domain2_url + save_data.php pattern) ──
 // anikoto's reference implementation tries this FIRST for any server whose
@@ -540,6 +658,18 @@ async function resolveAnikotoEmbed(embedUrl: string, serverName: string): Promis
 
 export async function getAnikotoEmbedUrl(sourceId: string): Promise<AnikotoStream | null> {
   const parts = sourceId.split('::');
+
+  if (parts[0] === 'kiwi') {
+    const [, malId, epNum, timestamp, type] = parts;
+    if (!malId || !epNum || !timestamp) {
+      log('getAnikotoEmbedUrl: malformed kiwi sourceId', sourceId);
+      return null;
+    }
+    return resolveKiwi(malId, epNum, timestamp, (type as 'sub' | 'dub') || 'sub').catch((err) => {
+      log('getAnikotoEmbedUrl: resolveKiwi threw unexpectedly', errInfo(err));
+      return null;
+    });
+  }
 
   const [slug, epNumStr, , linkId, svId, encodedName] = parts;
   if (!slug || !linkId) {
