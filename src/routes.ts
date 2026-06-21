@@ -7,11 +7,10 @@ import { resolveEmbed } from './resolvers/megacloud';
 import { getEpisodes, getServers, getEmbedUrl } from './scrapers/senshi';
 import { getHeavenEpisodes, getHeavenServers, getHeavenStream } from './scrapers/animeheaven';
 import { getMiruroEpisodes, getMiruroServers, getMiruroEmbedUrl } from './scrapers/miruro';
-import { getAnikotoEpisodes, getAnikotoServers, getAnikotoEmbedUrl } from './scrapers/anikoto';
 
 const router = Router();
 
-const SOURCES = ['senshi', 'animeheaven', 'miruro', 'anikoto'] as const;
+const SOURCES = ['senshi', 'animeheaven', 'miruro'] as const;
 type Source = typeof SOURCES[number];
 
 function publicBase(req: Request): string {
@@ -70,11 +69,6 @@ async function fetchEpisodes(source: Source, siteIds: any, overrides: { heavenId
     if (!siteIds.anilistId) return { episodes: [], siteId: '', error: 'Missing AniList ID for Miruro' };
     const alId = siteIds.anilistId as number;
     return { episodes: await getMiruroEpisodes(alId), siteId: String(alId) };
-  }
-  if (source === 'anikoto') {
-    const slug = siteIds.siteIds?.anikoto as string | undefined;
-    if (!slug) return { episodes: [], siteId: '', error: 'Not indexed on Anikoto' };
-    return { episodes: await getAnikotoEpisodes(slug), siteId: slug };
   }
   return { episodes: [], siteId: '', error: 'Unknown source' };
 }
@@ -153,7 +147,6 @@ router.get('/servers', async (req: Request, res: Response) => {
     if (source === 'senshi') allServers = await getServers(episode.id);
     if (source === 'animeheaven') allServers = await getHeavenServers(episode.id);
     if (source === 'miruro') allServers = await getMiruroServers(episode.id);
-    if (source === 'anikoto') allServers = await getAnikotoServers(episode.id);
 
     const filtered = type === 'all' ? allServers : allServers.filter((s: any) => s.type === type);
     return res.json({
@@ -205,7 +198,6 @@ async function watchHandler(req: Request, res: Response) {
     if (source === 'senshi') allServers = await getServers(episode.id);
     if (source === 'animeheaven') allServers = await getHeavenServers(episode.id);
     if (source === 'miruro') allServers = await getMiruroServers(episode.id);
-    if (source === 'anikoto') allServers = await getAnikotoServers(episode.id);
 
     const filtered = allServers.filter((s: any) => s.type === type);
     if (!filtered.length) return res.status(404).json({ error: `No ${type} stream available on ${source} for ep ${epNum}` });
@@ -225,7 +217,6 @@ async function watchHandler(req: Request, res: Response) {
       if (source === 'senshi') raw = await getEmbedUrl(server.sourceId);
       if (source === 'animeheaven') raw = await getHeavenStream(server.sourceId);
       if (source === 'miruro') raw = await getMiruroEmbedUrl(server.sourceId);
-      if (source === 'anikoto') raw = await getAnikotoEmbedUrl(server.sourceId);
       if (raw) { embedResult = raw; usedServer = server.name; break; }
     }
     if (!embedResult) return res.status(502).json({ error: 'All servers failed' });
@@ -291,32 +282,6 @@ async function watchHandler(req: Request, res: Response) {
         intro: null,
         outro: null,
         note: isHls ? null : 'This provider returned no HLS stream for this episode/category — use embedUrl in an iframe.',
-      });
-    }
-
-    // Anikoto's embed resolution (getAnikotoEmbedUrl) already fully resolves
-    // the stream internally — Megacloud/Megaplay decryption for regular
-    // servers, or a direct CDN m3u8 for the Kiwi Mapper side-channel — so,
-    // like Miruro, it skips the generic resolveEmbed() fallback below.
-    if (source === 'anikoto') {
-      return res.json({
-        anilistId: siteIds.anilistId,
-        malId: siteIds.malId,
-        title: siteIds.title,
-        episode: epNum,
-        type,
-        source,
-        server: usedServer,
-        availableServers: filtered.map((s: any) => s.name),
-        embedUrl: embedResult.embedUrl,
-        m3u8: embedResult.m3u8 ?? null,
-        hlsProxyUrl: embedResult.m3u8 ? proxiedHlsUrl(req, embedResult.m3u8, embedResult.referer) : null,
-        playbackMode: embedResult.m3u8 ? 'hls' : 'iframe',
-        iframeOnly: !embedResult.m3u8,
-        subtitles: embedResult.subtitles ?? [],
-        intro: null,
-        outro: null,
-        note: embedResult.m3u8 ? null : 'No m3u8 extracted — use embedUrl in an iframe.',
       });
     }
 
@@ -552,7 +517,7 @@ router.get('/debug/miruro', async (req: Request, res: Response) => {
 });
 
 router.get('/health', (_req, res) => {
-  res.json({ status: 'ok', version: '1.1.0-anikoto', sources: SOURCES, uptime: Math.floor(process.uptime()), cache: cacheStats(), timestamp: new Date().toISOString() });
+  res.json({ status: 'ok', version: '1.0.1-miruro-debug', sources: SOURCES, uptime: Math.floor(process.uptime()), cache: cacheStats(), timestamp: new Date().toISOString() });
 });
 
 export default router;
