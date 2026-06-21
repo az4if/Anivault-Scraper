@@ -14,6 +14,18 @@ const router = Router();
 const SOURCES = ['senshi', 'animeheaven', 'miruro', 'anikoto'] as const;
 type Source = typeof SOURCES[number];
 
+// Short aliases for the URL — e.g. /watch/koto/20/1/sub instead of
+// /watch/anikoto/20/1/sub. Resolved to the canonical Source name as early as
+// possible in every handler, before any other logic reads `source`.
+const SOURCE_ALIASES: Record<string, Source> = {
+  koto: 'anikoto',
+  heaven: 'animeheaven',
+};
+
+function normalizeSource(input: string): string {
+  return SOURCE_ALIASES[input] ?? input;
+}
+
 function publicBase(req: Request): string {
   const proto = (req.headers['x-forwarded-proto'] as string | undefined)?.split(',')[0] || req.protocol;
   return `${proto}://${req.get('host')}`;
@@ -105,9 +117,10 @@ router.get('/info', async (req: Request, res: Response) => {
 });
 
 router.get('/episodes', async (req: Request, res: Response) => {
-  const { anilistId, malId, source = 'senshi', heavenId } = req.query;
+  const { anilistId, malId, heavenId } = req.query;
+  const source = normalizeSource(String(req.query.source || 'senshi'));
   if (!anilistId && !malId && !(source === 'animeheaven' && heavenId)) return res.status(400).json({ error: 'Provide ?anilistId= or ?malId=, or ?heavenId= for AnimeHeaven' });
-  if (!SOURCES.includes(source as Source)) return res.status(400).json({ error: `source must be: ${SOURCES.join(', ')}` });
+  if (!SOURCES.includes(source as Source)) return res.status(400).json({ error: `source must be: ${SOURCES.join(', ')} (or koto/heaven)` });
   try {
     if (source === 'animeheaven' && heavenId && !anilistId && !malId) {
       const episodes = await getHeavenEpisodes(String(heavenId));
@@ -127,12 +140,13 @@ router.get('/episodes', async (req: Request, res: Response) => {
 });
 
 router.get('/servers', async (req: Request, res: Response) => {
-  const { anilistId, malId, ep, type = 'sub', source = 'senshi', heavenId } = req.query;
+  const { anilistId, malId, ep, type = 'sub', heavenId } = req.query;
+  const source = normalizeSource(String(req.query.source || 'senshi'));
   if (!ep) return res.status(400).json({ error: 'Missing ?ep=' });
   if (!anilistId && !malId && !(source === 'animeheaven' && heavenId)) return res.status(400).json({ error: 'Provide ?anilistId= or ?malId=, or ?heavenId= for AnimeHeaven' });
   const epNum = parseInt(ep as string);
   if (isNaN(epNum)) return res.status(400).json({ error: '?ep must be a number' });
-  if (!SOURCES.includes(source as Source)) return res.status(400).json({ error: `source must be: ${SOURCES.join(', ')}` });
+  if (!SOURCES.includes(source as Source)) return res.status(400).json({ error: `source must be: ${SOURCES.join(', ')} (or koto/heaven)` });
 
   try {
     const siteIds = heavenId && source === 'animeheaven'
@@ -172,11 +186,12 @@ router.get('/servers', async (req: Request, res: Response) => {
 });
 
 async function watchHandler(req: Request, res: Response) {
-  const { source, id, ep, type } = req.params;
+  const { id, ep, type } = req.params;
+  const source = normalizeSource(req.params.source);
   const preferredServer = req.query.server as string | undefined;
   const heavenOverride = req.query.heavenId as string | undefined;
 
-  if (!SOURCES.includes(source as Source)) return res.status(400).json({ error: `source must be: ${SOURCES.join(', ')}` });
+  if (!SOURCES.includes(source as Source)) return res.status(400).json({ error: `source must be: ${SOURCES.join(', ')} (or koto/heaven)` });
   const epNum = parseInt(ep);
   if (isNaN(epNum)) return res.status(400).json({ error: 'ep must be a number' });
   if (!['sub', 'dub', 'raw'].includes(type)) return res.status(400).json({ error: 'type must be: sub, dub, raw' });
@@ -448,11 +463,12 @@ router.get('/proxy/video', async (req: Request, res: Response) => {
 });
 
 router.get('/watch', async (req: Request, res: Response) => {
-  const { anilistId, malId, heavenId, ep, type = 'sub', source = 'senshi', server } = req.query;
+  const { anilistId, malId, heavenId, ep, type = 'sub', server } = req.query;
+  const source = normalizeSource(String(req.query.source || 'senshi'));
   if (!ep) return res.status(400).json({ error: 'Missing ?ep=' });
   if (!anilistId && !malId && !(source === 'animeheaven' && heavenId)) return res.status(400).json({ error: 'Provide ?anilistId= or ?malId=, or ?heavenId= for AnimeHeaven' });
   const id = heavenId && source === 'animeheaven' ? String(heavenId) : anilistId ? String(anilistId) : `mal-${malId}`;
-  req.params.source = String(source);
+  req.params.source = source;
   req.params.id = id;
   req.params.ep = String(ep);
   req.params.type = String(type);
@@ -553,7 +569,7 @@ router.get('/debug/miruro', async (req: Request, res: Response) => {
 });
 
 router.get('/health', (_req, res) => {
-  res.json({ status: 'ok', version: '1.1.0-anikoto', sources: SOURCES, uptime: Math.floor(process.uptime()), cache: cacheStats(), timestamp: new Date().toISOString() });
+  res.json({ status: 'ok', version: '1.1.0-anikoto', sources: SOURCES, sourceAliases: SOURCE_ALIASES, uptime: Math.floor(process.uptime()), cache: cacheStats(), timestamp: new Date().toISOString() });
 });
 
 export default router;
