@@ -502,8 +502,13 @@ async function doMegacloud(embedUrl: string, html: string, referer: string, serv
       timeout: 8000,
     });
 
+    // Filter to caption/subtitle tracks only — Megacloud's getSources also
+    // returns a "thumbnails" kind track (seeking sprite sheet) and sometimes
+    // "chapters" tracks. Including them pollutes the subtitle selector and,
+    // when one happens to be marked default, the player loads the sprite VTT
+    // instead of real captions and shows nothing.
     const subtitles: AnikotoSubtitle[] = (data?.tracks || [])
-      .filter((t: any) => t?.file)
+      .filter((t: any) => t?.file && t?.kind !== 'thumbnails' && t?.kind !== 'chapters')
       .map((t: any) => ({ url: t.file, lang: t.label ?? 'Unknown', default: Boolean(t.default) }));
 
     let m3u8: string | null = null;
@@ -553,8 +558,10 @@ async function doMegaplay(host: string, html: string, referer: string, serverNam
     });
 
     let m3u8: string | undefined = data?.sources?.file;
+    // Same as doMegacloud: exclude thumbnail/chapter tracks so only real
+    // caption tracks reach the subtitle selector.
     const subtitles: AnikotoSubtitle[] = (data?.tracks || [])
-      .filter((t: any) => t?.file)
+      .filter((t: any) => t?.file && t?.kind !== 'thumbnails' && t?.kind !== 'chapters')
       .map((t: any) => ({ url: t.file, lang: t.label ?? 'Unknown', default: Boolean(t.default) }));
 
     if (m3u8 && m3u8.includes('mewstream.buzz')) {
