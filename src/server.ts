@@ -3,6 +3,7 @@ import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import path from 'path';
 import routes from './routes';
+import discordRelay from './discord-relay';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3000');
@@ -30,6 +31,9 @@ app.use('/api', limiter);
 
 // API routes
 app.use('/api', routes);
+
+// Discord webhook relay (PHP → Railway → Vercel bot → Discord)
+app.use('/discord', discordRelay);
 
 // Serve static docs/tester
 app.use(express.static(path.join(__dirname, '../public')));
